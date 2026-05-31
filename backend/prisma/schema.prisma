@@ -1,0 +1,212 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  schemas  = ["public", "auth"]
+}
+
+model Profile {
+  id        String   @id @db.Uuid
+  fullName  String?  @map("full_name")
+  role      UserRole @default(citizen)
+  isBlocked Boolean  @default(false) @map("is_blocked")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  reports             Report[]
+  statusUpdates       ReportStatusUpdate[] @relation("StatusUpdatedBy")
+  reviewedSpamReports ReportReview[]       @relation("SpamReviewedBy")
+  blockedUsers        UserBlock[]          @relation("BlockedUser")
+  performedUserBlocks UserBlock[]          @relation("BlockedBy")
+  notificationTokens  NotificationToken[]
+  comments            ReportComment[]
+  upvotes             ReportUpvote[]
+  flags               ReportFlag[]
+
+  @@map("profiles")
+  @@schema("public")
+}
+
+model Category {
+  id          BigInt   @id @default(autoincrement())
+  name        String
+  description String?
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  reports Report[]
+
+  @@map("categories")
+  @@schema("public")
+}
+
+model Report {
+  id                          String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId                      String       @map("user_id") @db.Uuid
+  categoryId                  BigInt       @map("category_id")
+  description                 String
+  photoUrl                    String       @map("photo_url")
+  latitude                    Float
+  longitude                   Float
+  status                      ReportStatus @default(pending)
+  isSuspectedSpam             Boolean      @default(false) @map("is_suspected_spam")
+  submittedOutsideOfficeHours Boolean      @default(false) @map("submitted_outside_office_hours")
+  createdAt                   DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt                   DateTime     @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user          Profile              @relation(fields: [userId], references: [id])
+  category      Category             @relation(fields: [categoryId], references: [id])
+  statusUpdates ReportStatusUpdate[]
+  review        ReportReview?
+  comments      ReportComment[]
+  upvotes       ReportUpvote[]
+  flags         ReportFlag[]
+
+  @@index([userId])
+  @@index([categoryId])
+  @@index([status])
+  @@index([isSuspectedSpam])
+  @@map("reports")
+  @@schema("public")
+}
+
+model ReportComment {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId  String   @map("report_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  body      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  report Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([reportId])
+  @@index([userId])
+  @@map("report_comments")
+  @@schema("public")
+}
+
+model ReportUpvote {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId  String   @map("report_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  report Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, userId])
+  @@index([userId])
+  @@map("report_upvotes")
+  @@schema("public")
+}
+
+model ReportFlag {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId  String   @map("report_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  reason    String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  report Report  @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([reportId, userId])
+  @@index([userId])
+  @@map("report_flags")
+  @@schema("public")
+}
+
+model ReportStatusUpdate {
+  id        String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId  String       @map("report_id") @db.Uuid
+  status    ReportStatus
+  note      String?
+  updatedBy String?      @map("updated_by") @db.Uuid
+  createdAt DateTime     @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  report  Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  updater Profile? @relation("StatusUpdatedBy", fields: [updatedBy], references: [id])
+
+  @@index([reportId])
+  @@index([updatedBy])
+  @@map("report_status_updates")
+  @@schema("public")
+}
+
+model ReportReview {
+  id         String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId   String    @unique @map("report_id") @db.Uuid
+  spamScore  Float?    @map("spam_score")
+  spamReason String?   @map("spam_reason")
+  reviewedBy String?   @map("reviewed_by") @db.Uuid
+  reviewedAt DateTime? @map("reviewed_at") @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  report   Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  reviewer Profile? @relation("SpamReviewedBy", fields: [reviewedBy], references: [id])
+
+  @@index([reviewedBy])
+  @@map("report_reviews")
+  @@schema("public")
+}
+
+model UserBlock {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  blockedBy String?  @map("blocked_by") @db.Uuid
+  reason    String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user    Profile  @relation("BlockedUser", fields: [userId], references: [id])
+  blocker Profile? @relation("BlockedBy", fields: [blockedBy], references: [id])
+
+  @@index([userId])
+  @@index([blockedBy])
+  @@map("user_blocks")
+  @@schema("public")
+}
+
+model NotificationToken {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  token     String   @unique
+  platform  String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user Profile @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("notification_tokens")
+  @@schema("public")
+}
+
+enum UserRole {
+  citizen
+  dishub
+  admin
+
+  @@map("user_role")
+  @@schema("public")
+}
+
+enum ReportStatus {
+  pending
+  queued
+  accepted
+  rejected
+  in_progress
+  resolved
+  suspected_spam
+  suspected_spam_legacy @map("suspected spam")
+
+  @@map("report_status")
+  @@schema("public")
+}
