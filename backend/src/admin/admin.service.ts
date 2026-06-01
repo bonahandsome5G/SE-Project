@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AdminReportQueryDto } from './dto/admin-report-query.dto';
 import { BlockUserDto } from './dto/block-user.dto';
 import { ReportActionDto } from './dto/report-action.dto';
+import { ResolveReportDto } from './dto/resolve-report.dto';
 import { UpdateReportStatusDto } from './dto/update-report-status.dto';
 import { UserQueryDto } from './dto/user-query.dto';
 
@@ -18,6 +19,8 @@ export class AdminService {
   constructor(private readonly prisma: PrismaService) {}
 
   async getDashboardStats() {
+    await this.synchronizeReportStatuses();
+
     const [
       totalReports,
       pendingReports,
@@ -57,6 +60,8 @@ export class AdminService {
   }
 
   async getReports(query: AdminReportQueryDto) {
+    await this.synchronizeReportStatuses();
+
     const { page, limit, skip, take } = this.getPagination(query);
     const where = this.buildReportWhere(query);
 
@@ -78,14 +83,20 @@ export class AdminService {
   }
 
   async getSuspectedSpamReports(query: AdminReportQueryDto) {
+    await this.synchronizeReportStatuses();
+
     return this.getReports({ ...query, suspectedSpam: 'true' });
   }
 
   async getFlaggedReports(query: AdminReportQueryDto) {
+    await this.synchronizeReportStatuses();
+
     return this.getReports({ ...query, flagged: 'true' });
   }
 
   async getReport(reportId: string) {
+    await this.synchronizeReportStatuses();
+
     const report = await this.prisma.report.findUnique({
       where: { id: reportId },
       include: {
@@ -162,6 +173,51 @@ export class AdminService {
       ReportStatus.rejected,
       dto.note ?? 'Laporan ditolak oleh petugas.',
     );
+  }
+
+  async resolveReport(
+    user: AuthenticatedUser,
+    reportId: string,
+    dto: ResolveReportDto,
+  ) {
+    const proofPhotoUrl = dto.proofPhotoUrl?.trim();
+    if (!proofPhotoUrl) {
+      throw new BadRequestException('Foto bukti penyelesaian wajib diunggah');
+    }
+
+    const report = await this.prisma.report.findUnique({
+      where: { id: reportId },
+      select: { id: true },
+    });
+
+    if (!report) {
+      throw new NotFoundException('Laporan tidak ditemukan');
+    }
+
+    const updatedReport = await this.prisma.report.update({
+      where: { id: reportId },
+      data: {
+        status: ReportStatus.resolved,
+        isSuspectedSpam: false,
+        statusUpdates: {
+          create: {
+            status: ReportStatus.resolved,
+            note: dto.note?.trim() || 'Laporan selesai dengan bukti foto.',
+            updatedBy: user.id,
+          },
+        },
+        resolutionProofs: {
+          create: {
+            proofPhotoUrl,
+            note: dto.note?.trim() || null,
+            resolvedBy: user.id,
+          },
+        },
+      },
+      include: this.reportInclude(),
+    });
+
+    return this.mapReport(updatedReport);
   }
 
   async getUsers(query: UserQueryDto) {
@@ -363,11 +419,87 @@ export class AdminService {
     };
   }
 
+  private async synchronizeReportStatuses() {
+    if (!this.isOfficeHours()) {
+      return;
+    }
+
+    const [pendingReports, queuedReports] = await Promise.all([
+      this.prisma.report.findMany({
+        where: {
+          status: ReportStatus.pending,
+          isSuspectedSpam: false,
+          submittedOutsideOfficeHours: false,
+        },
+        select: { id: true },
+      }),
+      this.prisma.report.findMany({
+        where: {
+          status: ReportStatus.queued,
+          isSuspectedSpam: false,
+          submittedOutsideOfficeHours: true,
+        },
+        select: { id: true },
+      }),
+    ]);
+
+    const pendingIds = pendingReports.map((report) => report.id);
+    const queuedIds = queuedReports.map((report) => report.id);
+
+    if (pendingIds.length === 0 && queuedIds.length === 0) {
+      return;
+    }
+
+    await this.prisma.$transaction([
+      ...(pendingIds.length > 0
+        ? [
+            this.prisma.report.updateMany({
+              where: { id: { in: pendingIds } },
+              data: { status: ReportStatus.accepted },
+            }),
+            this.prisma.reportStatusUpdate.createMany({
+              data: pendingIds.map((reportId) => ({
+                reportId,
+                status: ReportStatus.accepted,
+                note: 'Laporan otomatis diterima saat dashboard admin dibuka pada jam kerja.',
+              })),
+            }),
+          ]
+        : []),
+      ...(queuedIds.length > 0
+        ? [
+            this.prisma.report.updateMany({
+              where: { id: { in: queuedIds } },
+              data: { status: ReportStatus.pending },
+            }),
+            this.prisma.reportStatusUpdate.createMany({
+              data: queuedIds.map((reportId) => ({
+                reportId,
+                status: ReportStatus.pending,
+                note: 'Laporan dari luar jam kerja dipindahkan ke menunggu saat jam kerja dimulai.',
+              })),
+            }),
+          ]
+        : []),
+    ]);
+  }
+
+  private isOfficeHours() {
+    const now = new Date();
+    const jakartaHour = (now.getUTCHours() + 7) % 24;
+
+    return jakartaHour >= 9 && jakartaHour < 17;
+  }
+
   private reportInclude() {
     return {
       category: true,
       user: { select: { id: true, fullName: true, role: true, isBlocked: true } },
       _count: { select: { comments: true, upvotes: true, flags: true } },
+      resolutionProofs: {
+        orderBy: { createdAt: 'desc' },
+        take: 1,
+      },
     } satisfies Prisma.ReportInclude;
   }
 
@@ -387,7 +519,16 @@ export class AdminService {
     createdAt: Date;
     updatedAt: Date;
     _count: { comments: number; upvotes: number; flags: number };
+    resolutionProofs?: {
+      id: string;
+      proofPhotoUrl: string;
+      note: string | null;
+      resolvedBy: string | null;
+      createdAt: Date;
+    }[];
   }) {
+    const resolutionProof = report.resolutionProofs?.[0];
+
     return {
       id: report.id,
       user_id: report.userId,
@@ -406,6 +547,10 @@ export class AdminService {
       comment_count: report._count.comments,
       upvote_count: report._count.upvotes,
       flag_count: report._count.flags,
+      resolution_proof_photo_url: resolutionProof?.proofPhotoUrl ?? null,
+      resolution_note: resolutionProof?.note ?? null,
+      resolved_by: resolutionProof?.resolvedBy ?? null,
+      resolved_at: resolutionProof?.createdAt ?? null,
       created_at: report.createdAt,
       updated_at: report.updatedAt,
     };

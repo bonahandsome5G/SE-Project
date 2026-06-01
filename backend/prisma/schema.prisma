@@ -28,6 +28,7 @@ model Profile {
   comments            ReportComment[]
   upvotes             ReportUpvote[]
   flags               ReportFlag[]
+  resolutionProofs    ReportResolutionProof[]
 
   @@map("profiles")
   @@schema("public")
@@ -67,12 +68,30 @@ model Report {
   comments      ReportComment[]
   upvotes       ReportUpvote[]
   flags         ReportFlag[]
+  resolutionProofs ReportResolutionProof[]
 
   @@index([userId])
   @@index([categoryId])
   @@index([status])
   @@index([isSuspectedSpam])
   @@map("reports")
+  @@schema("public")
+}
+
+model ReportResolutionProof {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reportId      String   @map("report_id") @db.Uuid
+  proofPhotoUrl String   @map("proof_photo_url")
+  note          String?
+  resolvedBy    String?  @map("resolved_by") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  report   Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  resolver Profile? @relation(fields: [resolvedBy], references: [id])
+
+  @@index([reportId])
+  @@index([resolvedBy])
+  @@map("report_resolution_proofs")
   @@schema("public")
 }
 

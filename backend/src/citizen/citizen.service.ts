@@ -20,7 +20,13 @@ export class CitizenService {
   async getMyReports(user: AuthenticatedUser) {
     const reports = await this.prisma.report.findMany({
       where: { userId: user.id },
-      include: { category: true },
+      include: {
+        category: true,
+        resolutionProofs: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
+      },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -36,6 +42,10 @@ export class CitizenService {
       status: report.status,
       is_suspected_spam: report.isSuspectedSpam,
       submitted_outside_office_hours: report.submittedOutsideOfficeHours,
+      resolution_proof_photo_url:
+        report.resolutionProofs[0]?.proofPhotoUrl ?? null,
+      resolution_note: report.resolutionProofs[0]?.note ?? null,
+      resolved_at: report.resolutionProofs[0]?.createdAt ?? null,
       created_at: report.createdAt,
       updated_at: report.updatedAt,
     }));
@@ -49,6 +59,10 @@ export class CitizenService {
       },
       include: {
         category: true,
+        resolutionProofs: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
         _count: { select: { comments: true, upvotes: true } },
         upvotes: { where: { userId: user.id }, select: { id: true } },
       },
@@ -91,6 +105,10 @@ export class CitizenService {
       },
       include: {
         category: true,
+        resolutionProofs: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+        },
         _count: { select: { comments: true, upvotes: true } },
         upvotes: { where: { userId: user.id }, select: { id: true } },
       },
@@ -157,6 +175,9 @@ export class CitizenService {
       status: report.status,
       is_suspected_spam: report.isSuspectedSpam,
       submitted_outside_office_hours: report.submittedOutsideOfficeHours,
+      resolution_proof_photo_url: null,
+      resolution_note: null,
+      resolved_at: null,
       created_at: report.createdAt,
       updated_at: report.updatedAt,
     };
@@ -289,6 +310,11 @@ export class CitizenService {
     submittedOutsideOfficeHours: boolean;
     createdAt: Date;
     updatedAt: Date;
+    resolutionProofs: {
+      proofPhotoUrl: string;
+      note: string | null;
+      createdAt: Date;
+    }[];
     _count: { comments: number; upvotes: number };
     upvotes: { id: string }[];
   }) {
@@ -307,6 +333,10 @@ export class CitizenService {
       upvote_count: report._count.upvotes,
       comment_count: report._count.comments,
       has_upvoted: report.upvotes.length > 0,
+      resolution_proof_photo_url:
+        report.resolutionProofs[0]?.proofPhotoUrl ?? null,
+      resolution_note: report.resolutionProofs[0]?.note ?? null,
+      resolved_at: report.resolutionProofs[0]?.createdAt ?? null,
       created_at: report.createdAt,
       updated_at: report.updatedAt,
     };

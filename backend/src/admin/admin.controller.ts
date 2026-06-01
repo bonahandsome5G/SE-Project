@@ -19,6 +19,7 @@ import { AdminService } from './admin.service';
 import { AdminReportQueryDto } from './dto/admin-report-query.dto';
 import { BlockUserDto } from './dto/block-user.dto';
 import { ReportActionDto } from './dto/report-action.dto';
+import { ResolveReportDto } from './dto/resolve-report.dto';
 import { UpdateReportStatusDto } from './dto/update-report-status.dto';
 import { UserQueryDto } from './dto/user-query.dto';
 
@@ -93,6 +94,15 @@ export class AdminController {
     @Body() dto: ReportActionDto,
   ) {
     return this.adminService.rejectReport(user, reportId, dto);
+  }
+
+  @Post('reports/:reportId/resolve')
+  resolveReport(
+    @CurrentUser() user: AuthenticatedUser,
+    @Param('reportId') reportId: string,
+    @Body() dto: ResolveReportDto,
+  ) {
+    return this.adminService.resolveReport(user, reportId, dto);
   }
 
   @Get('users')
